@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-
+import API from "./api";
 // ============================================================
-// MOCK DATABASE (localStorage-backed, simulates MongoDB)
+// MOCK DATABASE (localStorage-backend, simulates MongoDB)
 // ============================================================
-const DB = {
+/*const DB = {
   init() {
     if (!localStorage.getItem("ppm_users")) {
       localStorage.setItem("ppm_users", JSON.stringify([
@@ -67,7 +67,8 @@ const DB = {
     if (idx >= 0) projects[idx] = proj; else projects.push(proj);
     DB.saveProjects(projects);
   },
-};
+};*/
+
 
 // ============================================================
 // STYLES
@@ -493,9 +494,17 @@ function AuthModal({ defaultTab = "login", onLogin, onClose }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [rollNo, setRollNo] = useState("");
+  const [accessKey, setAccessKey] = useState("");
+  const [showKeyRecovery, setShowKeyRecovery] = useState(false);
+  const [recoveryName, setRecoveryName] = useState("");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  const accessKeys = {
+    faculty: "FACULTY2026",
+    admin: "ADMIN2026",
+  };
 
   const hints = {
     student: ["arjun@student.edu", "priya@student.edu"],
@@ -503,82 +512,311 @@ function AuthModal({ defaultTab = "login", onLogin, onClose }) {
     admin: ["admin@college.edu"],
   };
 
-  const handleLogin = () => {
-    if (!email || !password) { setError("Please fill in all fields."); return; }
-    const user = DB.login(email, password);
-    if (!user) { setError("Invalid credentials. Please try again."); return; }
-    if (user.role !== role) { setError(`This account is not a ${role}.`); return; }
-    onLogin(user);
+  // ✅ LOGIN
+  const handleLogin = async () => {
+    setError("");
+    setSuccess("");
+
+    if (!email || !password) {
+      setError("Please fill in all fields.");
+      return;
+    }
+
+    if (role !== "student" && accessKey.trim() !== accessKeys[role]) {
+      setError(`${role.charAt(0).toUpperCase() + role.slice(1)} access key is required.`);
+      return;
+    }
+
+    try {
+      const res = await API.post("/login", {
+        email,
+        password,
+      });
+
+      const { token, user } = res.data;
+
+      if (!user) {
+        setError("Invalid credentials.");
+        return;
+      }
+
+      // ✅ role check FIXED
+      if (user.role !== role.toLowerCase()) {
+        setError(`This account is not a ${role}.`);
+        return;
+      }
+
+      // ✅ Save session
+      localStorage.setItem("token", token);
+      localStorage.setItem("user", JSON.stringify(user));
+
+      onLogin(user);
+
+    } catch (err) {
+      console.error("Login Error:", err);
+
+      if (err.response && err.response.data) {
+        setError(err.response.data.message || "Login failed.");
+      } else {
+        setError("Server error. Please try again.");
+      }
+    }
   };
 
-  const handleSignup = () => {
-    if (!name || !email || !password) { setError("Please fill all required fields."); return; }
-    const existing = DB.getUsers().find(u => u.email === email);
-    if (existing) { setError("Email already registered."); return; }
-    const newUser = {
-      id: "u" + Date.now(), role, name, email, password,
-      avatar: name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
-      rollNo: role === "student" ? rollNo : undefined,
-    };
-    DB.saveUsers([...DB.getUsers(), newUser]);
-    setSuccess("Account created! You can now log in.");
-    setTab("login"); setName(""); setRollNo(""); setError("");
+  const handleRecoverAccessKey = async () => {
+    setError("");
+    setSuccess("");
+
+    if (!recoveryName.trim() || !recoveryEmail.trim()) {
+      setError("Enter your registered name and email to recover access.");
+      return;
+    }
+
+    try {
+      const res = await API.get("/users");
+      const matchedUser = res.data.find(u =>
+        u.role === role &&
+        u.email?.toLowerCase() === recoveryEmail.trim().toLowerCase() &&
+        u.name?.toLowerCase() === recoveryName.trim().toLowerCase()
+      );
+
+      if (!matchedUser) {
+        setError("Details do not match any registered account for this role.");
+        return;
+      }
+
+      setAccessKey(accessKeys[role]);
+      setShowKeyRecovery(false);
+      setRecoveryName("");
+      setRecoveryEmail("");
+      setSuccess("Access verified. Enter your password and sign in.");
+    } catch (err) {
+      setError("Could not verify details. Make sure the backend is running.");
+    }
+  };
+
+  // ✅ SIGNUP
+  const handleSignup = async () => {
+    setError("");
+    setSuccess("");
+
+    if (!name || !email || !password) {
+      setError("Please fill all required fields.");
+      return;
+    }
+
+    try {
+      const res = await API.post("/register", {
+        name,
+        email,
+        password,
+        role: role.toLowerCase(), // ✅ IMPORTANT FIX
+      });
+
+      if (res && res.data) {
+        setSuccess("Account created successfully! Please login.");
+        setTab("login");
+        setName("");
+        setEmail("");
+        setPassword("");
+      }
+
+    } catch (err) {
+      console.error("Signup Error:", err);
+
+      if (err.response && err.response.data) {
+        setError(err.response.data.message || "Signup failed.");
+      } else {
+        setError("Server error. Please try again.");
+      }
+    }
   };
 
   return (
     <div className="auth-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="auth-modal">
         <button className="auth-close" onClick={onClose}>×</button>
+
         <div className="auth-modal-header">
           <div className="auth-modal-tabs">
-            <button className={`auth-tab ${tab === "login" ? "active" : ""}`} onClick={() => { setTab("login"); setError(""); setSuccess(""); }}>Sign In</button>
-            <button className={`auth-tab ${tab === "signup" ? "active" : ""}`} onClick={() => { setTab("signup"); setError(""); setSuccess(""); }}>Sign Up</button>
+            <button
+              className={`auth-tab ${tab === "login" ? "active" : ""}`}
+              onClick={() => { setTab("login"); setError(""); setSuccess(""); }}
+            >
+              Sign In
+            </button>
+
+            <button
+              className={`auth-tab ${tab === "signup" ? "active" : ""}`}
+              onClick={() => { setTab("signup"); setError(""); setSuccess(""); }}
+            >
+              Sign Up
+            </button>
           </div>
         </div>
+
         <div className="auth-modal-body">
+
           {tab === "login" ? (
             <>
               <div className="auth-title">Welcome back</div>
               <div className="auth-subtitle">Sign in to your account to continue</div>
+
               <div className="role-tabs">
                 {["student", "faculty", "admin"].map(r => (
-                  <button key={r} className={`role-tab ${role === r ? "active" : ""}`} onClick={() => { setRole(r); setEmail(""); setPassword(""); setError(""); }}>
-                    {r === "student" ? "🎓" : r === "faculty" ? "📚" : "⚙"} {r.charAt(0).toUpperCase() + r.slice(1)}
+                  <button
+                    key={r}
+                    className={`role-tab ${role === r ? "active" : ""}`}
+                    onClick={() => {
+                      setRole(r);
+                      setEmail("");
+                      setPassword("");
+                      setAccessKey("");
+                      setShowKeyRecovery(false);
+                      setRecoveryName("");
+                      setRecoveryEmail("");
+                      setError("");
+                    }}
+                  >
+                    {r === "student" ? "🎓" : r === "faculty" ? "📚" : "⚙"}{" "}
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
                   </button>
                 ))}
               </div>
+
               {error && <div className="error-msg">⚠ {error}</div>}
-              {success && <div style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "11px 15px", borderRadius: "var(--radius-sm)", marginBottom: 14, fontSize: "0.875rem" }}>✅ {success}</div>}
+              {success && (
+                <div style={{
+                  background: "rgba(34,197,94,0.12)",
+                  border: "1px solid rgba(34,197,94,0.25)",
+                  color: "#4ade80",
+                  padding: "11px 15px",
+                  borderRadius: "var(--radius-sm)",
+                  marginBottom: 14,
+                  fontSize: "0.875rem"
+                }}>
+                  ✅ {success}
+                </div>
+              )}
+
               <label className="form-label">Email Address</label>
-              <input className="form-input" type="email" placeholder={`${role}@institution.edu`} value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} />
+              <input
+                className="form-input"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+              />
+
               <label className="form-label">Password</label>
-              <input className="form-input" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} />
-              <button className="btn-primary" onClick={handleLogin}>Sign In →</button>
-              <div className="hint-box">
-                <p style={{ fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>Demo · password: <strong style={{ color: "var(--gold)" }}>{role === "admin" ? "admin123" : role === "faculty" ? "faculty123" : "student123"}</strong></p>
-                {hints[role].map(h => <p key={h}>• {h}</p>)}
-              </div>
+              <input
+                className="form-input"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+
+              {role !== "student" && (
+                <>
+                  <label className="form-label">
+                    {role.charAt(0).toUpperCase() + role.slice(1)} Access Key
+                  </label>
+                  <input
+                    className="form-input"
+                    type="password"
+                    value={accessKey}
+                    onChange={e => setAccessKey(e.target.value)}
+                    placeholder="Enter access key"
+                  />
+
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    style={{ marginBottom: 14 }}
+                    onClick={() => {
+                      setShowKeyRecovery(!showKeyRecovery);
+                      setError("");
+                      setSuccess("");
+                    }}
+                  >
+                    Forgot access key?
+                  </button>
+
+                  {showKeyRecovery && (
+                    <div style={{ marginBottom: 16, padding: 14, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "rgba(255,255,255,0.04)" }}>
+                      <label className="form-label">Registered Full Name</label>
+                      <input
+                        className="form-input"
+                        value={recoveryName}
+                        onChange={e => setRecoveryName(e.target.value)}
+                        placeholder="Full name"
+                      />
+                      <label className="form-label">Registered Email</label>
+                      <input
+                        className="form-input"
+                        type="email"
+                        value={recoveryEmail}
+                        onChange={e => setRecoveryEmail(e.target.value)}
+                        placeholder="email@college.edu"
+                      />
+                      <button className="btn btn-teal btn-sm" onClick={handleRecoverAccessKey}>
+                        Verify Details
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <button className="btn-primary" onClick={handleLogin}>
+                Sign In →
+              </button>
             </>
           ) : (
             <>
               <div className="auth-title">Create account</div>
-              <div className="auth-subtitle">Join the platform as a student today</div>
-              <div className="role-tabs" style={{ marginBottom: 20 }}>
-                {["student", "faculty"].map(r => (
-                  <button key={r} className={`role-tab ${role === r ? "active" : ""}`} onClick={() => setRole(r)}>
-                    {r === "student" ? "🎓" : "📚"} {r.charAt(0).toUpperCase() + r.slice(1)}
+              <div className="auth-subtitle">Join the platform with the right role</div>
+
+              <div className="role-tabs">
+                {["student", "faculty", "admin"].map(r => (
+                  <button
+                    key={r}
+                    className={`role-tab ${role === r ? "active" : ""}`}
+                    onClick={() => setRole(r)}
+                  >
+                    {r === "student" ? "🎓" : "📚"}{" "}
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
                   </button>
                 ))}
               </div>
+
               {error && <div className="error-msg">⚠ {error}</div>}
+              {success && <div className="alert alert-success">✅ {success}</div>}
+
               <label className="form-label">Full Name *</label>
-              <input className="form-input" placeholder="e.g. Arjun Sharma" value={name} onChange={e => setName(e.target.value)} />
+              <input
+                className="form-input"
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
+
               <label className="form-label">Email Address *</label>
-              <input className="form-input" type="email" placeholder="you@institution.edu" value={email} onChange={e => setEmail(e.target.value)} />
+              <input
+                className="form-input"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+              />
+
               <label className="form-label">Password *</label>
-              <input className="form-input" type="password" placeholder="Create a password" value={password} onChange={e => setPassword(e.target.value)} />
-              {role === "student" && (<><label className="form-label">Roll Number</label><input className="form-input" placeholder="e.g. CS2024010" value={rollNo} onChange={e => setRollNo(e.target.value)} /></>)}
-              <button className="btn-primary" onClick={handleSignup}>Create Account →</button>
+              <input
+                className="form-input"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+
+              <button className="btn-primary" onClick={handleSignup}>
+                Create Account →
+              </button>
             </>
           )}
         </div>
@@ -586,7 +824,6 @@ function AuthModal({ defaultTab = "login", onLogin, onClose }) {
     </div>
   );
 }
-
 // ============================================================
 // LANDING PAGE
 // ============================================================
@@ -775,77 +1012,160 @@ function Sidebar({ user, page, setPage, onLogout }) {
 // STUDENT PAGES
 // ============================================================
 function StudentDashboard({ user }) {
-  const projects = DB.getProjects().filter(p => p.studentId === user.id);
+
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    API.get(`/projects/student/${user.id}`)
+      .then(res => setProjects(res.data))
+      .catch(() => setProjects([]))
+      .finally(() => setLoading(false));
+  }, [user.id]);
+
+  if (loading) {
+    return <div className="fade-up">Loading dashboard...</div>;
+  }
+
   const evaluated = projects.filter(p => p.status === "evaluated");
   const submitted = projects.filter(p => p.status === "submitted");
-  const avgMarks = evaluated.length ? Math.round(evaluated.reduce((s, p) => s + (p.evaluation?.marks || 0), 0) / evaluated.length) : 0;
+
+  const avgMarks = evaluated.length
+    ? Math.round(
+        evaluated.reduce((s, p) => s + (p.evaluation?.marks || 0), 0) /
+        evaluated.length
+      )
+    : 0;
 
   return (
     <div className="fade-up">
       <div className="page-header">
-        <div className="page-title">Welcome back, {user.name.split(" ")[0]}! 👋</div>
-        <div className="page-subtitle">Here's your academic overview for this semester.</div>
+        <div className="page-title">
+          Welcome back, {user.name?.split(" ")[0]}! 👋
+        </div>
+        <div className="page-subtitle">
+          Here's your academic overview for this semester.
+        </div>
       </div>
+
       <div className="stats-grid">
-        <div className="stat-card fade-up">
+        <div className="stat-card">
           <div className="stat-icon">📁</div>
           <div className="stat-value">{projects.length}</div>
           <div className="stat-label">Total Projects</div>
         </div>
-        <div className="stat-card fade-up-2">
+
+        <div className="stat-card">
           <div className="stat-icon">📤</div>
           <div className="stat-value">{submitted.length}</div>
           <div className="stat-label">Pending Review</div>
         </div>
-        <div className="stat-card fade-up-3">
+
+        <div className="stat-card">
           <div className="stat-icon">⭐</div>
           <div className="stat-value">{avgMarks || "—"}</div>
           <div className="stat-label">Avg. Score / 100</div>
         </div>
+
         <div className="stat-card">
           <div className="stat-icon">✅</div>
           <div className="stat-value">{evaluated.length}</div>
           <div className="stat-label">Evaluated</div>
         </div>
       </div>
+
       <div className="two-col">
+
+        {/* Recent Projects */}
         <div className="card">
           <div className="card-title">📋 Recent Projects</div>
-          {projects.length === 0 ? <div className="empty-state"><div className="empty-icon">📂</div><p>No projects yet</p></div> :
+
+          {projects.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">📂</div>
+              <p>No projects yet</p>
+            </div>
+          ) : (
             projects.slice(0, 4).map(p => (
-              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
+              <div key={p.id} style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 16,
+                paddingBottom: 16,
+                borderBottom: "1px solid var(--border)"
+              }}>
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{p.title}</div>
-                  <div className="text-muted">{fmtDate(p.submittedAt || p.submittedAt)}</div>
+                  <div style={{ fontWeight: 600 }}>{p.title}</div>
+                  <div className="text-muted">
+                    {fmtDate(p.submittedAt)}
+                  </div>
                 </div>
                 {getBadge(p.status)}
               </div>
             ))
-          }
+          )}
         </div>
+
+        {/* Performance */}
         <div className="card">
           <div className="card-title">📊 Performance</div>
-          {evaluated.length === 0 ? <div className="empty-state"><div className="empty-icon">📈</div><p>No evaluations yet</p></div> :
-            evaluated.map(p => (
-              <div key={p.id} style={{ marginBottom: 20 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontWeight: 600 }}>{p.title}</span>
-                  <span className="text-gold font-bold">{p.evaluation.marks}/100</span>
+
+          {evaluated.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">📈</div>
+              <p>No evaluations yet</p>
+            </div>
+          ) : (
+            evaluated.map(p => {
+              const marks = p.evaluation?.marks || 0;
+
+              return (
+                <div key={p.id} style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontWeight: 600 }}>{p.title}</span>
+                    <span className="text-gold font-bold">
+                      {marks}/100
+                    </span>
+                  </div>
+
+                  <div style={{
+                    height: 8,
+                    background: "rgba(255,255,255,0.06)",
+                    borderRadius: 4,
+                    overflow: "hidden"
+                  }}>
+                    <div style={{
+                      height: "100%",
+                      width: `${marks}%`,
+                      background: "linear-gradient(90deg, var(--gold), var(--teal))",
+                      borderRadius: 4
+                    }} />
+                  </div>
                 </div>
-                <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${p.evaluation.marks}%`, background: "linear-gradient(90deg, var(--gold), var(--teal))", borderRadius: 4, transition: "width 0.8s ease" }} />
-                </div>
-              </div>
-            ))
-          }
+              );
+            })
+          )}
         </div>
+
       </div>
     </div>
   );
 }
 
 function MyProjects({ user }) {
-  const projects = DB.getProjects().filter(p => p.studentId === user.id);
+ const [projects, setProjects] = useState([]);
+const [loading, setLoading] = useState(true);
+
+useEffect(() => {
+  API.get(`/projects/student/${user.id}`)
+    .then(res => setProjects(res.data))
+    .catch(() => setProjects([]))
+    .finally(() => setLoading(false));
+}, [user.id]);
+if (loading) {
+  return <div className="fade-up">Loading projects...</div>;
+}
   return (
     <div className="fade-up">
       <div className="page-header">
@@ -884,22 +1204,40 @@ function MyProjects({ user }) {
 
 function SubmitProject({ user }) {
   const [form, setForm] = useState({ title: "", description: "", tech: "" });
+  const [selectedFile, setSelectedFile] = useState(null);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = () => {
+  const readSubmissionFile = (file) => new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Could not read the selected file."));
+    reader.readAsDataURL(file);
+  });
+
+  const handleSubmit = async () => {
     if (!form.title || !form.description || !form.tech) { setError("Please fill all fields."); return; }
-    const proj = {
-      id: "p" + Date.now(), studentId: user.id, title: form.title, description: form.description,
-      tech: form.tech, status: "submitted", submittedAt: new Date().toISOString(), fileUrl: null, fileName: null,
-      milestones: [{ title: "Proposal", done: true }, { title: "Design", done: true }, { title: "Development", done: true }, { title: "Testing", done: false }],
-      evaluation: null
-    };
-    DB.upsertProject(proj);
-    setSuccess(true);
-    setForm({ title: "", description: "", tech: "" });
-    setError("");
-    setTimeout(() => setSuccess(false), 4000);
+    try {
+      const fileUrl = await readSubmissionFile(selectedFile);
+      const proj = {
+        id: "p" + Date.now(), studentId: user.id, title: form.title, description: form.description,
+        tech: form.tech, status: "submitted", submittedAt: new Date().toISOString(), fileUrl, fileName: selectedFile?.name || null,
+        milestones: [{ title: "Proposal", done: true }, { title: "Design", done: true }, { title: "Development", done: true }, { title: "Testing", done: false }],
+        evaluation: null
+      };
+      await API.post("/projects", proj);
+      setSuccess(true);
+      setForm({ title: "", description: "", tech: "" });
+      setSelectedFile(null);
+      setError("");
+      setTimeout(() => setSuccess(false), 4000);
+    } catch (err) {
+      setError(err.message || "Could not submit project.");
+    }
   };
 
   return (
@@ -924,11 +1262,18 @@ function SubmitProject({ user }) {
           <input className="form-input" placeholder="e.g. React, Node.js, MongoDB" value={form.tech} onChange={e => setForm({ ...form, tech: e.target.value })} />
         </div>
         <div className="form-group">
-          <label className="form-label">Upload File (Demo)</label>
+          <label className="form-label">Upload File</label>
           <div style={{ padding: "24px", border: "2px dashed var(--border)", borderRadius: "var(--radius-sm)", textAlign: "center", color: "var(--text-muted)" }}>
             <div style={{ fontSize: "2rem", marginBottom: 8 }}>📎</div>
-            <p>Drag & drop or click to upload (PDF, ZIP, DOCX)</p>
-            <p style={{ fontSize: "0.75rem", marginTop: 6 }}>(Demo: file storage simulated)</p>
+            <input
+              className="form-input"
+              type="file"
+              accept=".pdf,.zip,.doc,.docx"
+              onChange={e => setSelectedFile(e.target.files?.[0] || null)}
+              style={{ marginBottom: 8 }}
+            />
+            <p>{selectedFile ? selectedFile.name : "Choose a PDF, ZIP, DOC, or DOCX file"}</p>
+            <p style={{ fontSize: "0.75rem", marginTop: 6 }}>(File name is saved with the submission)</p>
           </div>
         </div>
         <button className="btn btn-gold" style={{ width: "100%", padding: "14px", fontSize: "1rem" }} onClick={handleSubmit}>
@@ -940,8 +1285,28 @@ function SubmitProject({ user }) {
 }
 
 function StudentResults({ user }) {
-  const projects = DB.getProjects().filter(p => p.studentId === user.id && p.status === "evaluated");
+
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState([]);
+
+  useEffect(() => {
+    API.get(`/projects/student/${user.id}`)
+      .then(res => setProjects(res.data))
+      .catch(() => setProjects([]))
+      .finally(() => setLoading(false));
+  }, [user.id]);
+
+  useEffect(() => {
+    API.get("/users")
+      .then(res => setUsers(res.data))
+      .catch(() => setUsers([]));
+  }, []);
+if (loading) {
+  return <div className="fade-up">Loading results...</div>;
+}
   const rubricMax = { innovation: 20, technical: 25, presentation: 20, documentation: 20, teamwork: 15 };
+  const evaluatedProjects = projects.filter(p => p.status === "evaluated" && p.evaluation);
 
   return (
     <div className="fade-up">
@@ -949,11 +1314,11 @@ function StudentResults({ user }) {
         <div className="page-title">Results & Feedback 📊</div>
         <div className="page-subtitle">View marks and feedback from faculty evaluations</div>
       </div>
-      {projects.length === 0 ? (
+      {evaluatedProjects.length === 0 ? (
         <div className="card"><div className="empty-state"><div className="empty-icon">⏳</div><p>No evaluations received yet. Submit a project first!</p></div></div>
-      ) : projects.map(p => {
+      ) : evaluatedProjects.map(p => {
         const ev = p.evaluation;
-        const fac = DB.getUser(ev.evaluatedBy);
+        const fac = users.find(u => u.id === ev.evaluatedBy);
         return (
           <div className="card" key={p.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
@@ -991,20 +1356,30 @@ function StudentResults({ user }) {
 // FACULTY PAGES
 // ============================================================
 function FacultyDashboard({ user }) {
-  const all = DB.getProjects();
-  const submitted = all.filter(p => p.status === "submitted").length;
-  const evaluated = all.filter(p => p.status === "evaluated").length;
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+  API.get("/projects")
+    .then(res => setProjects(res.data))
+    .catch(() => setProjects([]))
+    .finally(() => setLoading(false));
+}, []);
+const submitted = projects.filter(p => p.status === "submitted").length;
+const evaluated = projects.filter(p => p.status === "evaluated").length;
+if (loading) {
+  return <div className="fade-up">Loading dashboard...</div>;
+}
   return (
     <div className="fade-up">
       <div className="page-header">
         <div className="page-title">Faculty Dashboard 📚</div>
         <div className="page-subtitle">Welcome, {user.name}. Review pending submissions below.</div>
       </div>
-      <div className="stats-grid">
-        <div className="stat-card"><div className="stat-icon">📋</div><div className="stat-value">{all.length}</div><div className="stat-label">Total Submissions</div></div>
-        <div className="stat-card"><div className="stat-icon">⏳</div><div className="stat-value">{submitted}</div><div className="stat-label">Pending Review</div></div>
-        <div className="stat-card"><div className="stat-icon">✅</div><div className="stat-value">{evaluated}</div><div className="stat-label">Evaluated</div></div>
-      </div>
+      <div className="stat-card">
+  <div className="stat-icon">📋</div>
+  <div className="stat-value">{projects.length}</div>
+  <div className="stat-label">Total Submissions</div>
+</div>
       <div className="card">
         <div className="card-title">⚡ Quick Summary</div>
         <p style={{ color: "var(--text-muted)", lineHeight: 1.8 }}>
@@ -1019,18 +1394,69 @@ function FacultyDashboard({ user }) {
 function AllSubmissions({ user }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
-  const projects = DB.getProjects();
-  const users = DB.getUsers();
+  const [projects, setProjects] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+  Promise.all([
+    API.get("/projects"),
+    API.get("/users")
+  ])
+    .then(([projRes, userRes]) => {
+      setProjects(projRes.data);
+      setUsers(userRes.data);
+    })
+    .catch(() => {
+      setProjects([]);
+      setUsers([]);
+    })
+    .finally(() => setLoading(false));
+}, []);
 
   const filtered = projects.filter(p => {
     const s = users.find(u => u.id === p.studentId);
     const txt = (p.title + " " + (s?.name || "")).toLowerCase();
     return (filter === "all" || p.status === filter) && txt.includes(search.toLowerCase());
   });
+ if (loading) {
+  return <div className="fade-up">Loading submissions...</div>;
+}
+  const dataUrlToBlobUrl = (dataUrl) => {
+    const [meta, base64] = dataUrl.split(",");
+    const mime = meta.match(/data:(.*?);base64/)?.[1] || "application/octet-stream";
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  };
 
-  const downloadSim = (p) => {
-    DB.logError(`Download attempted for project "${p.title}" (ID: ${p.id}) — no file attached yet.`);
-    alert(`Demo: In production, "${p.fileName || p.title}" would download here.`);
+  const viewSubmission = (p) => {
+    if (!p.fileUrl) {
+      alert("No file was uploaded for this submission.");
+      return;
+    }
+    if (!p.fileUrl.startsWith("data:")) {
+      window.open(p.fileUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const blobUrl = dataUrlToBlobUrl(p.fileUrl);
+    window.open(blobUrl, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  };
+
+  const downloadSubmission = (p) => {
+    if (!p.fileUrl) {
+      alert("No file was uploaded for this submission.");
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = p.fileUrl;
+    link.download = p.fileName || `${p.title || "submission"}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -1067,7 +1493,8 @@ function AllSubmissions({ user }) {
                     <td>{getBadge(p.status)}</td>
                     <td>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button className="btn btn-outline btn-sm" onClick={() => downloadSim(p)}>⬇ Download</button>
+                        <button className="btn btn-outline btn-sm" onClick={() => viewSubmission(p)}>View</button>
+                        <button className="btn btn-outline btn-sm" onClick={() => downloadSubmission(p)}>⬇ Download</button>
                       </div>
                     </td>
                   </tr>
@@ -1085,12 +1512,28 @@ function AllSubmissions({ user }) {
 const RUBRIC_MAX = { innovation: 20, technical: 25, presentation: 20, documentation: 20, teamwork: 15 };
 
 function EvaluateProjects({ user }) {
-  const [projects, setProjects] = useState(DB.getProjects());
+  const [projects, setProjects] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [rubric, setRubric] = useState({ innovation: 15, technical: 20, presentation: 15, documentation: 15, teamwork: 12 });
   const [feedback, setFeedback] = useState("");
   const [success, setSuccess] = useState(false);
-  const users = DB.getUsers();
+  useEffect(() => {
+  Promise.all([
+    API.get("/projects"),
+    API.get("/users")
+  ])
+    .then(([projRes, userRes]) => {
+      setProjects(projRes.data);
+      setUsers(userRes.data);
+    })
+    .catch(() => {
+      setProjects([]);
+      setUsers([]);
+    })
+    .finally(() => setLoading(false));
+}, []);
 
   const pending = projects.filter(p => p.status === "submitted");
 
@@ -1103,16 +1546,32 @@ function EvaluateProjects({ user }) {
 
   const totalMarks = Object.entries(rubric).reduce((s, [k, v]) => s + Math.min(Number(v), RUBRIC_MAX[k]), 0);
 
-  const handleSubmit = () => {
-    if (!feedback.trim()) { alert("Please add feedback."); return; }
-    const updated = { ...selected, status: "evaluated", evaluation: { marks: totalMarks, feedback, rubric, evaluatedBy: user.id, evaluatedAt: new Date().toISOString() } };
-    DB.upsertProject(updated);
-    const refreshed = DB.getProjects();
-    setProjects(refreshed);
-    setSelected(null);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 3000);
+  const handleSubmit = async () => {
+  if (!feedback.trim()) {
+    alert("Please add feedback.");
+    return;
+  }
+
+  const updated = {
+    ...selected,
+    status: "evaluated",
+    evaluation: {
+      marks: rubric,
+      feedback,
+      evaluatedBy: user.id
+    }
   };
+
+  await API.put(`/projects/${selected.id}`, updated);
+
+  API.get("/projects")
+    .then(res => setProjects(res.data))
+    .catch(() => setProjects([]));
+
+  setSelected(null);
+  setSuccess(true);
+  setTimeout(() => setSuccess(false), 3000);
+};
 
   return (
     <div className="fade-up">
@@ -1179,79 +1638,177 @@ function EvaluateProjects({ user }) {
 // ADMIN PAGES
 // ============================================================
 function AdminDashboard() {
-  const users = DB.getUsers();
-  const projects = DB.getProjects();
-  const errors = DB.getErrors().filter(e => !e.resolved);
+
+  const [users, setUsers] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [errors, setErrors] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      API.get("/users"),
+      API.get("/projects"),
+      API.get("/errors")
+    ])
+      .then(([userRes, projRes, errRes]) => {
+        setUsers(userRes.data);
+        setProjects(projRes.data);
+        setErrors(errRes.data.filter(e => !e.resolved));
+      })
+      .catch(() => {
+        setUsers([]);
+        setProjects([]);
+        setErrors([]);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return <div className="fade-up">Loading admin dashboard...</div>;
+  }
+
   return (
     <div className="fade-up">
       <div className="page-header">
         <div className="page-title">Admin Dashboard ⚙</div>
         <div className="page-subtitle">Platform-wide overview and health monitoring</div>
       </div>
+
       <div className="stats-grid">
-        <div className="stat-card"><div className="stat-icon">👥</div><div className="stat-value">{users.length}</div><div className="stat-label">Total Users</div></div>
-        <div className="stat-card"><div className="stat-icon">📁</div><div className="stat-value">{projects.length}</div><div className="stat-label">Total Projects</div></div>
-        <div className="stat-card"><div className="stat-icon">⭐</div><div className="stat-value">{projects.filter(p => p.status === "evaluated").length}</div><div className="stat-label">Evaluated</div></div>
-        <div className="stat-card"><div className="stat-icon">🔴</div><div className="stat-value" style={{ color: errors.length > 0 ? "var(--red)" : "var(--green)" }}>{errors.length}</div><div className="stat-label">Active Errors</div></div>
+        <div className="stat-card">
+          <div className="stat-icon">👥</div>
+          <div className="stat-value">{users.length}</div>
+          <div className="stat-label">Total Users</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon">📁</div>
+          <div className="stat-value">{projects.length}</div>
+          <div className="stat-label">Total Projects</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon">⭐</div>
+          <div className="stat-value">
+            {projects.filter(p => p.status === "evaluated").length}
+          </div>
+          <div className="stat-label">Evaluated</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon">🔴</div>
+          <div className="stat-value" style={{
+            color: errors.length > 0 ? "var(--red)" : "var(--green)"
+          }}>
+            {errors.length}
+          </div>
+          <div className="stat-label">Active Errors</div>
+        </div>
       </div>
+
       {errors.length > 0 && (
-        <div className="alert alert-warn">⚠ There are {errors.length} unresolved error(s). Check the Error Logs tab.</div>
+        <div className="alert alert-warn">
+          ⚠ There are {errors.length} unresolved error(s).
+        </div>
       )}
+
       <div className="two-col">
+
+        {/* USERS BY ROLE */}
         <div className="card">
           <div className="card-title">👥 Users by Role</div>
+
           {["student", "faculty", "admin"].map(role => {
             const count = users.filter(u => u.role === role).length;
+
             return (
-              <div key={role} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid var(--border)" }}>
+              <div key={role} style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginBottom: 14,
+                paddingBottom: 14,
+                borderBottom: "1px solid var(--border)"
+              }}>
                 <div>{getRoleBadge(role)}</div>
-                <span style={{ fontWeight: 700, fontSize: "1.2rem", color: "var(--gold)" }}>{count}</span>
+                <span style={{ fontWeight: 700, color: "var(--gold)" }}>
+                  {count}
+                </span>
               </div>
             );
           })}
         </div>
+
+        {/* PROJECT STATUS */}
         <div className="card">
           <div className="card-title">📋 Project Status</div>
+
           {["draft", "submitted", "evaluated"].map(s => {
             const count = projects.filter(p => p.status === s).length;
+
             return (
-              <div key={s} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid var(--border)" }}>
+              <div key={s} style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginBottom: 14,
+                paddingBottom: 14,
+                borderBottom: "1px solid var(--border)"
+              }}>
                 {getBadge(s)}
-                <span style={{ fontWeight: 700, fontSize: "1.2rem", color: "var(--gold)" }}>{count}</span>
+                <span style={{ fontWeight: 700, color: "var(--gold)" }}>
+                  {count}
+                </span>
               </div>
             );
           })}
         </div>
+
       </div>
     </div>
   );
 }
-
 function ManageUsers() {
-  const [users, setUsers] = useState(DB.getUsers());
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "student", rollNo: "", department: "" });
   const [search, setSearch] = useState("");
+  useEffect(() => {
+  API.get("/users")
+    .then(res => setUsers(res.data))
+    .catch(() => setUsers([]))
+    .finally(() => setLoading(false));
+}, []);
 
   const filtered = users.filter(u => (u.name + u.email).toLowerCase().includes(search.toLowerCase()));
 
-  const addUser = () => {
+  const addUser = async () => {
     if (!form.name || !form.email || !form.password) { alert("Fill all required fields."); return; }
     const newUser = { id: "u" + Date.now(), avatar: form.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(), ...form };
     const updated = [...users, newUser];
-    DB.saveUsers(updated);
+    await API.post("/register", newUser);
+
+// refresh list
+API.get("/users")
+  .then(res => setUsers(res.data))
+  .catch(() => setUsers([]));
     setUsers(updated);
     setShowAdd(false);
     setForm({ name: "", email: "", password: "", role: "student", rollNo: "", department: "" });
   };
 
-  const deleteUser = (id) => {
+  const deleteUser = async (id) => {
     if (!window.confirm("Remove this user?")) return;
     const updated = users.filter(u => u.id !== id);
-    DB.saveUsers(updated);
+    await API.delete(`/users/${id}`);
+
+API.get("/users")
+  .then(res => setUsers(res.data))
+  .catch(() => setUsers([]));
     setUsers(updated);
   };
-
+if (loading) {
+  return <div className="fade-up">Loading users...</div>;
+}
   return (
     <div className="fade-up">
       <div className="page-header">
@@ -1317,8 +1874,27 @@ function ManageUsers() {
 }
 
 function AdminProjects() {
-  const projects = DB.getProjects();
-  const users = DB.getUsers();
+  const [projects, setProjects] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+  Promise.all([
+    API.get("/projects"),
+    API.get("/users")
+  ])
+    .then(([projRes, userRes]) => {
+      setProjects(projRes.data);
+      setUsers(userRes.data);
+    })
+    .catch(() => {
+      setProjects([]);
+      setUsers([]);
+    })
+    .finally(() => setLoading(false));
+}, []);
+if (loading) {
+  return <div className="fade-up">Loading projects...</div>;
+}
   return (
     <div className="fade-up">
       <div className="page-header">
@@ -1352,24 +1928,43 @@ function AdminProjects() {
 }
 
 function ErrorLogs() {
-  const [errors, setErrors] = useState(DB.getErrors());
+  const [errors, setErrors] = useState([]);
+const [loading, setLoading] = useState(true);
+useEffect(() => {
+  API.get("/errors")
+    .then(res => setErrors(res.data))
+    .catch(() => setErrors([]))
+    .finally(() => setLoading(false));
+}, []);
+  const resolve = async (id) => {
+    await API.put(`/errors/${id}/resolve`);
 
-  const resolve = (id) => {
-    DB.resolveError(id);
-    setErrors(DB.getErrors());
+API.get("/errors")
+  .then(res => setErrors(res.data))
+  .catch(() => setErrors([]));
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (!window.confirm("Clear all resolved errors?")) return;
-    DB.saveErrors(DB.getErrors().filter(e => !e.resolved));
-    setErrors(DB.getErrors());
+    await API.delete("/errors/resolved");
+
+API.get("/errors")
+  .then(res => setErrors(res.data))
+  .catch(() => setErrors([]));
   };
 
-  const simulate = () => {
-    DB.logError(`Simulated error: Null pointer in SubmissionController at ${new Date().toLocaleTimeString()}`);
-    setErrors(DB.getErrors());
-  };
+  const simulate = async () => {
+    await API.post("/errors", {
+  message: "Simulated error: Null pointer in SubmissionController"
+});
 
+API.get("/errors")
+  .then(res => setErrors(res.data))
+  .catch(() => setErrors([]));
+  };
+if (loading) {
+  return <div className="fade-up">Loading error logs...</div>;
+}
   return (
     <div className="fade-up">
       <div className="page-header">
@@ -1413,7 +2008,12 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("dashboard");
 
-  useEffect(() => { DB.init(); }, []);
+  useEffect(() => {
+  const savedUser = localStorage.getItem("user");
+  if (savedUser) {
+    setUser(JSON.parse(savedUser));
+  }
+}, []);
 
   const handleLogin = (u) => { setUser(u); setPage("dashboard"); };
   const handleLogout = () => { setUser(null); setPage("dashboard"); };
