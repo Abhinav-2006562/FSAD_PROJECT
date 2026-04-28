@@ -506,12 +506,6 @@ function AuthModal({ defaultTab = "login", onLogin, onClose }) {
     admin: "ADMIN2026",
   };
 
-  const hints = {
-    student: ["arjun@student.edu", "priya@student.edu"],
-    faculty: ["sarah@college.edu", "mark@college.edu"],
-    admin: ["admin@college.edu"],
-  };
-
   // ✅ LOGIN
   const handleLogin = async () => {
     setError("");
@@ -1365,7 +1359,6 @@ function FacultyDashboard({ user }) {
     .finally(() => setLoading(false));
 }, []);
 const submitted = projects.filter(p => p.status === "submitted").length;
-const evaluated = projects.filter(p => p.status === "evaluated").length;
 if (loading) {
   return <div className="fade-up">Loading dashboard...</div>;
 }
@@ -1534,6 +1527,9 @@ function EvaluateProjects({ user }) {
     })
     .finally(() => setLoading(false));
 }, []);
+if (loading) {
+  return <div className="fade-up">Loading evaluations...</div>;
+}
 
   const pending = projects.filter(p => p.status === "submitted");
 
