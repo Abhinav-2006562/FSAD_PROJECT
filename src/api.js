@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: "http://localhost:8080/api",
+  baseURL: "https://fsadbackend-production-10f0.up.railway.app/api",
 });
 
 // Attach JWT token automatically
